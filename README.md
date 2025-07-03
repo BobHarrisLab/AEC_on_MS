@@ -38,28 +38,34 @@ Despite a growing interest in Amniotic Epithelial Cell (AEC)-based therapies, th
 
 ## 🔧 Setup and Requirements
 
-We recommend using [R (≥4.2)](https://www.r-project.org/) with the following R packages:
+### For Single Cell RNA Sequencing Data Analysis:
 
+We used [R (≥4.2)](https://www.r-project.org/) with the following R packages:
 * `Seurat` ≥ 5.0
+* `niceRplot`
 * `tidyverse`
 * `ggplot2`
 * `flowCore`
 * `ComplexHeatmap`
-* `SingleR`, `celldex` (for immune annotation)
-* `DESeq2` (if bulk RNA-seq is used)
+* `Gprofiler2`
+* `clusterProfiler`
+* `enrichplot`
+* `Slingshot`
+* `tradeSeq`
+* `Cellchat`
 
-For Python components (if any):
 
-* `scanpy`, `pandas`, `numpy`, `matplotlib`, `scikit-learn`
+For Python components:
+* `pySCENIC`
 
-Install R dependencies:
+### For Bulk RNA Sequencing Analysis:
+* `FastQC`
+* `HISAT2`
+* `DESeq2`
+* `Enhanced Volcanoon` 
+* `ggvenn`
 
-```R
-install.packages(c("Seurat", "tidyverse", "ggplot2", "ComplexHeatmap"))
-if (!requireNamespace("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
-BiocManager::install(c("flowCore", "DESeq2", "SingleR", "celldex"))
-```
+
 
 ---
 
@@ -71,23 +77,7 @@ Please refer to the `data/README.md` file in each subfolder for specific descrip
 
 ---
 
-## 🧪 Reproducing Key Results
 
-Example: To reproduce the main single-cell analysis pipeline:
-
-```bash
-Rscript scripts/scRNAseq_analysis.R
-```
-
-This script performs quality control, normalization, dimensionality reduction (UMAP), clustering, and marker gene identification.
-
-Figure generation can be triggered using:
-
-```bash
-Rscript figures/fig1_immune_landscape.R
-```
-
----
 
 ## 🖋️ Citation
 
@@ -103,8 +93,9 @@ If you use this code, please cite:
 
 For questions regarding the code or data, please contact:
 
-* **\[First Author Name]** – \[[email@example.com](mailto:email@example.com)]
-* **\[Corresponding Author]** – \[[corresponding.author@institute.edu](mailto:corresponding.author@institute.edu)]
+* **\[Yuxi Guo]** – \[[yuxi.guo@ki.se](mailto:yuxi.guo@ki.se)]
+* **\[Heela Sarlus]** – \[[heela.sarlus@ki.se](mailto:heela.sarlus@ki.se)]
+* **\[Robert Harris]** – \[[robert.harris@ki.se](mailto:robert.harris@ki.se)]
 
 ---
 
