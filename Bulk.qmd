@@ -1,0 +1,431 @@
+---
+title: "Bulk"
+format: html
+---
+
+## Load all the librires:
+
+```{r Load librires}
+library(tidyverse)
+library(DESeq2)
+library(ComplexHeatmap)
+
+library(gprofiler2)
+library(correlationAnalyzeR)
+library(clusterProfiler)
+#library(xlsx)
+
+library(plotly)
+library(DOSE)
+
+GOBP_list <- getTERM2GENE(GSEA_Type = "GO:BP", Species = "mmusculus") 
+KEGG_list <- getTERM2GENE(GSEA_Type = "KEGG", Species = "mmusculus")
+
+
+```
+
+
+## PCA on FPKM
+
+### Load the Data 
+
+```{r Load the data}
+#metadata
+meta <- read.csv("../../data/Bulk/studydesign2.xls",sep = "\t")
+
+#FPKM data
+DATA <-read.delim("../../data/Bulk/gene_fpkm.xls", sep = "\t", header=TRUE, row.names = "gene_id")
+
+DATA <- DATA[, meta$Sample]
+
+```
+
+#### Boxplot
+
+```{r boxplot}
+
+
+DATA <- DATA[rowSums(DATA) > 1,] 
+
+#DATA <- DATA[rowSums(DATA >=10) >= 3,] 
+pdf("../../Results/BULK/Boxplot.pdf", width = 5, height = 6)
+boxplot( log2(DATA+1), las = 2,
+  main = "Original Log2 Ratios")
+dev.off()
+```
+
+
+#### PCA
+
+```{r PCA}
+DATA.pca <- prcomp(t(log(DATA+1)), center = T)
+#DATA.pca <- prcomp(t(DATA), center = T)
+
+DATA.pca.sum <- as.data.frame(summary(DATA.pca)$importance)
+DATA.pca <- as.data.frame(DATA.pca$x)
+
+DATA.pca$Group <-meta$Treatment
+
+DATA.pca$Group <- factor(DATA.pca$Group, levels = unique(c("Ctrl", "6_Hours","1_Day", "3_Days")))
+
+DATA.pca$Sample <- rownames(DATA.pca)
+
+pdf("../../Results/BULK/PCA.pdf", width = 6,height = 5.6)
+  ggplot(as.data.frame(DATA.pca),
+  aes(x = PC1, y = PC2, colour = Group)
+  ) +
+  geom_point(shape=19, size=4, alpha = 0.7)+
+  geom_text(aes(label = Sample), position = position_jitter(width =2, height = 4)) +
+  geom_hline(yintercept = 0, colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = 0, colour = "gray65", linetype = "dashed") +
+  ggtitle("PCA On Proteins") +
+  xlab(paste0("PC1 (",DATA.pca.sum$PC1[2]*100,"%)"))+
+  ylab(paste0("PC2 (",DATA.pca.sum$PC2[2]*100,"%)"))+
+  #ylab("PC3 2.1%")+
+  theme_classic()
+dev.off()
+```
+
+## DEGs
+
+#### Condition 
+```{r Set the Condition}
+Con1 = "6_Hours"
+  #"Ctrl" 
+  #"6_Hours"
+  #"1_Day"
+  #"3_Days"
+
+Con2 = "Ctrl"
+  #"Ctrl" 
+  #"6_Hours"
+  #"1_Day"
+  #"3_Days"
+```
+
+```{r Load the data for DEG, echo=FALSE}
+#metadata
+meta <- read.csv("../../data/Bulk/studydesign2.xls",sep = "\t")
+
+#rowcount data
+DATA <-read.delim("../../data/Bulk/gene_count.xls", sep = "\t", header=TRUE, row.names = "gene_id")
+
+
+meta <- meta[which(meta$Treatment == Con1| meta$Treatment == Con2),]
+DATA <- DATA[, meta$Sample]
+
+print(paste0("Current Comparision is between ", Con1, " vs ", Con2, "!"))
+```
+
+```{r make a DESeq object}
+data <- DESeqDataSetFromMatrix(countData = DATA,
+                              colData = meta,
+                              design = ~ Treatment)
+
+data <- data[rowSums(counts(data)) > 1,]
+
+data <- DESeq(data)
+res <- results(data, contrast=c("Treatment",Con1,Con2))
+DATA.org <- read.delim("../../data/Bulk/gene_count.xls", sep = "\t", header=TRUE)
+res$gene_name<-DATA.org[match(sapply(strsplit(rownames(res),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_name"]
+res$gene_des<-DATA.org[match(sapply(strsplit(rownames(res),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_description"]
+res<-as.data.frame(res)
+```
+
+```{r Interactive Volcano Plot}
+
+res <- res %>%mutate(threshold_OE = padj <= 0.05 & abs(log2FoldChange) >= 1)
+
+res$diffexpressed <- "NO"
+res$diffexpressed[res$log2FoldChange > 1 & res$threshold_OE == TRUE] <- "UP"
+res$diffexpressed[res$log2FoldChange < -1 & res$threshold_OE == TRUE] <- "DOWN"
+table(res$diffexpressed)
+mycolors <- c("#282973","#1D5B2D",  "grey")
+  names(mycolors) <- c("DOWN", "UP", "NO")
+#if(interactive == T){
+  
+res$diffexpressed <- factor(res$diffexpressed, levels = c("NO", "UP", "DOWN"))
+l<-ggplotly(
+ggplot(res %>% arrange(match(diffexpressed, c( "NO","UP", "DOWN")))) +
+  aes(x = log2FoldChange, y = -log10(padj), colour = diffexpressed, text = gene_name)+
+  geom_point(size=2)+
+  scale_color_manual(values = mycolors)  +
+  geom_hline(yintercept = -log10(0.05), colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = 1, colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = -1, colour = "gray65", linetype = "dashed") +
+  labs(x = "log2 fold change",
+       y = "-log10 padj",
+       title = "Volcano Plot",
+       #subtitle = paste0( Condition1, "vs", Condition2),
+       caption=paste0("produced on ", Sys.time())) +
+  theme_classic()) %>% layout(title = list(text = paste0('VolcanoPlots',
+                                    '<br>',
+                                    '<sup>',
+                                     paste0(Con1, " vs " ,Con2, "   P_adj < 0.05 & abs(LogFC) >= 1"),
+                                    '</sup>')), 
+        hoverlabel=list(bgcolor="white") )
+
+htmlwidgets::saveWidget(l, paste0("../../Results/BULK/", Con1, "_vs_", Con2, "Vol_inter.html"))
+```
+
+```{r Volcano Plot}
+pdf(paste0("../../Results/BULK/", Con1, "_vs_", Con2, "_Vol.pdf"), width = 4, height = 4)
+res = arrange(res, desc(-pvalue))
+ggplot(res) +
+  geom_point(aes(x = log2FoldChange, y = -log10(padj), colour = diffexpressed), size = 2)+
+  scale_color_manual(values = mycolors)  + xlim(-5,3.5)+
+  #geom_text_repel(data=res[res$diffexpressed != "NO",][0:20,], aes(x = log2FoldChange, y = -log10(padj)), label= res$gene_name[res$diffexpressed != "NO"][0:20] )+
+  geom_hline(yintercept = -log10(0.05), colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = 1, colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = -1, colour = "gray65", linetype = "dashed") +
+  labs(x = "log2 fold change",
+       y = "-log10 padj",
+       title = "Volcano Plot",
+       subtitle = paste0( Con1, " vs ", Con2, "   P_adj<0.05 & abs(LogFC)>= 1"),
+       caption=paste0("produced on ", Sys.time())) +
+  theme_classic()
+dev.off()
+```
+
+```{r}
+
+
+diffexpressed <- ifelse(
+    res$log2FoldChange > 1 & res$threshold_OE == TRUE, '#1D5B2D',
+    ifelse(
+      res$log2FoldChange < 1 & res$threshold_OE == TRUE, "#282973",
+        'grey'))
+diffexpressed[is.na(diffexpressed)] <- "grey"
+names(diffexpressed)[diffexpressed == "#1D5B2D"] <- "UP"
+names(diffexpressed)[diffexpressed == "#282973"] <- "DOWN"
+names(diffexpressed)[diffexpressed == "grey"] <- "no Sig"
+```
+
+##### Customized Volcano
+
+```{r Customized Volcano}
+pdf(paste0("../../Results/BULK/", Con1, "_vs_", Con2, "_Vol.pdf"), width = 4, height = 4)
+EnhancedVolcano(res, 
+                x ="log2FoldChange", 
+                y = "padj" , 
+                subtitle = paste0( Con1, " vs ", Con2, "   P_adj < 0.05 & abs(LogFC) >= 1"),
+                selectLab = c("Gng4", "Gbp2", "Eomes", "Lgr5", "Apold1", "Capn11", "Cxcl10","Shox2", "Ifi44","Ccl7"),
+                lab = res$gene_name, 
+                pCutoff = 0.05,
+                colAlpha = 0.8,
+                pointSize = 1,
+                ylab = bquote(~-Log[10] ~ italic(Padj)),
+                drawConnectors = T,
+                widthConnectors = 0.4,
+                colConnectors = 'black',
+                boxedLabels = T,
+                labSize = 2,
+                colCustom = diffexpressed
+                #col = c("grey","grey","#1D5B2D")
+                ) + 
+  theme_classic() +
+  theme(legend.title=element_blank())
+dev.off()
+```
+
+Here I save the gene name for Vennes Graph
+
+```{r Keep Data for Vennes Graph}
+DEG_up <- list()
+DEG_down <- list()
+DEG <- list()
+
+
+DEG_up[[paste0(Con1,"_vs_", Con2)]]  <- as.character(res[res$diffexpressed == "UP",]$gene_name)
+DEG_down[[paste0(Con1,"_vs_", Con2)]]  <- as.character(res[res$diffexpressed == "DOWN",]$gene_name)
+DEG[[paste0(Con1,"_vs_", Con2)]]  <- as.character(res[res$diffexpressed != "NO",]$gene_name)
+```
+
+```{r}
+write.csv(as.data.frame(res),paste0("../../Results/BULK/",Con1,"_vs_",Con2,".csv" ))
+
+```
+
+
+##### Gene Ontology
+
+```{r}
+
+
+
+go = gost(res$gene_name[res$diffexpressed =="UP"], organism = 'mmusculus')
+
+write.csv(go$result[,3:11],paste0("../../Results/BULK/Enrichment/",Con1,"_vs_",Con2,".csv"))
+
+htmlwidgets::saveWidget(as_widget(assign(paste0("plot", i), gostplot(go,interactive = T)%>% layout(title = paste0("Cluster ", i)))), paste0("Cluster ",i," GO.html"))
+
+```
+
+##### GSEA
+
+```{r}
+geneList = list()
+
+res_slfc<-lfcShrink(data, coef =  "Treatment_Ctrl_vs_6_Hours")
+res_slfc$gene_name<-DATA.org[match(sapply(strsplit(rownames(res),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_name"]
+res_slfc$gene_des<-DATA.org[match(sapply(strsplit(rownames(res),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_description"]
+
+geneList <- -res_slfc$log2FoldChange
+names(geneList)=res_slfc$gene_name
+
+geneList=sort(geneList,decreasing = T) 
+
+
+GOBP <-GSEA(geneList, TERM2GENE =GOBP_list, 
+            #scoreType = "pos",
+            #pAdjustMethod = "BY",
+            pvalueCutoff = 1)
+write.csv(GOBP@result,paste0("../../Results/BULK/Enrichment/",Con1,"_vs_",Con2,"_gsea.csv"))
+
+KEGG <-GSEA(geneList, TERM2GENE =KEGG_list, 
+            #scoreType = "pos",
+            #pAdjustMethod = "BY",
+            pvalueCutoff = 1)
+
+write.csv(KEGG@result,paste0("../../Results/BULK/Enrichment/",Con1,"_vs_",Con2,"_gsea_KEGG.csv"))
+```
+
+#### Venn Diagram
+```{r}
+library(ggVennDiagram)
+
+pdf("../../Results/BULK/Venn_UP.pdf", width = 8, height = 5)
+ggvenn(DEG_up, fill_color = c("#282973","#1D5B2D","#0E99B2"),fill_alpha = 0.65, set_name_size = 4, stroke_size = 0.5, text_size = 3) + ggtitle("Upregulated Genes")
+dev.off()
+
+pdf("../../Results/BULK/Venn_DOWN.pdf", width = 8, height = 5)
+ggvenn(DEG_down, fill_color = c("#282973","#1D5B2D","#0E99B2"),fill_alpha = 0.65, set_name_size = 4, stroke_size = 0.5, text_size = 3) + ggtitle("Upregulated Genes")
+dev.off()
+
+```
+
+#### Save common gene list
+
+```{r}
+library(gplots)
+
+venn_up <- attr(venn(DEG_up),"intersections")
+
+venn_up2 <- as.data.frame(matrix(c(venn_up, rep(220, length(venn_up) %% 220)), 220))
+
+venn_down <- venn(DEG_down)
+
+```
+
+```{r}
+
+venn_up <- attr(venn(DEG_up),"intersections")
+write_csv(data.frame(
+  `1_Day_vs_Ctrl:3_Days_vs_Ctrl` = venn_up$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`,
+  `6_Hours_vs_Ctrl:1_Day_vs_Ctrl` = c(venn_up$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl`, rep(NA, length(venn_up$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`) - length(venn_up$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl`))),
+  `6_Hours_vs_Ctrl:3_Days_vs_Ctrl` = c(venn_up$`6_Hours_vs_Ctrl:3_Days_vs_Ctrl`, rep(NA, length(venn_up$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`) - length(venn_up$`6_Hours_vs_Ctrl:3_Days_vs_Ctrl`))),
+  `6_Hours_vs_Ctrl:1_Day_vs_Ctrl:3_Days_vs_Ctrl` = c(venn_up$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl:3_Days_vs_Ctrl`, rep(NA, length(venn_up$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`) - length(venn_up$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl:3_Days_vs_Ctrl`)))
+  ),"../../Results/BULK/Venn_up.csv")
+
+venn_down <- attr(venn(DEG_down),"intersections")
+write_csv(data.frame(
+  `1_Day_vs_Ctrl:3_Days_vs_Ctrl` = venn_down$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`,
+  `6_Hours_vs_Ctrl:1_Day_vs_Ctrl` = c(venn_down$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl`, rep(NA, length(venn_down$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`) - length(venn_down$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl`))),
+  `6_Hours_vs_Ctrl:1_Day_vs_Ctrl:3_Days_vs_Ctrl` = c(venn_down$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl:3_Days_vs_Ctrl`, rep(NA, length(venn_down$`1_Day_vs_Ctrl:3_Days_vs_Ctrl`) - length(venn_down$`6_Hours_vs_Ctrl:1_Day_vs_Ctrl:3_Days_vs_Ctrl`)))
+  ),"../../Results/BULK/Venn_down.csv")
+
+```
+
+## Plot interested genes
+
+#### FPKM
+
+```{r}
+meta <- read.csv("../../data/Bulk/studydesign2.xls",sep = "\t")
+
+#FPKM data
+DATA <-read.delim("../../data/Bulk/gene_fpkm.xls", sep = "\t", header=TRUE, row.names = "gene_id")
+
+DATA <- DATA[, meta$Sample]
+DATA <- DATA[rowSums(DATA) > 1,] 
+DATA <- log2(DATA+1)
+DATA.org <- read.delim("../../data/Bulk/gene_count.xls", sep = "\t", header=TRUE)
+DATA$gene_name<-DATA.org[match(sapply(strsplit(rownames(DATA),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_name"]
+
+data <- DATA[DATA$gene_name == "Arg1",]
+row.names(data) <- data$gene_name
+data$gene_name<- NULL
+data<-as.data.frame(t(data))
+data$Group <-meta$Treatment
+
+data$Group <- factor(data$Group, levels = unique(c("Ctrl", "6_Hours","1_Day", "3_Days")))
+
+data$Sample <- rownames(data)
+
+
+
+    ggplotly(
+      ggplot(d)+ aes(x = Group, y = Arg1, color = Group, label = rownames(data)) + 
+        geom_boxplot()+
+        
+        geom_point(position=position_jitter(w = 0.1,h = 0)) +
+        #geom_text_repel(aes(label = rownames(d)), max.overlaps = Inf) + 
+        theme_bw() +
+        ggtitle(genename) +
+        theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)))%>%
+      layout(hoverlabel=list(bgcolor="white"))
+
+pdf("../../Results/BULK/Arg1.pdf", width = 5, height = 3)   
+  ggplot(data)+ aes(x = Group, y = Arg1, color = Group) + 
+    geom_line(data =  aggregate(Arg1 ~ Group, data = data, mean), color = "azure3", group = 1)+
+    geom_boxplot(staplewidth = 0.2, width = 0.3)+ 
+    geom_point(position=position_jitter(w = 0.1,h = 0)) +
+  #geom_text_repel(aes(label = rownames(d)), max.overlaps = Inf) + 
+    theme_classic() +
+    ylab("Log2(FPKM+1)")+
+    ggtitle("Arg1") +
+    theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+```
+
+#### DESeq2 Counts
+
+```{r}
+meta <- read.csv("../../data/Bulk/studydesign2.xls",sep = "\t")
+
+#rowcount data
+DATA <-read.delim("../../data/Bulk/gene_count.xls", sep = "\t", header=TRUE, row.names = "gene_id")
+DATA.org <- read.delim("../../data/Bulk/gene_count.xls", sep = "\t", header=TRUE)
+
+
+DATA <- DATA[, meta$Sample]
+
+DATA <- DATA[rowSums(data >= 10) >= 3, ]
+
+data <- DESeqDataSetFromMatrix(countData = DATA,
+                              colData = meta,
+                              design = ~ Treatment)
+
+data <- data[rowSums(counts(data) >= 10) >= 3, ]
+
+data <- DESeq(data)
+
+sizeFactors(data)
+data.nor <- counts(data, normalized=TRUE)
+#data.nor$gene_name<-DATA.org[match(sapply(strsplit(rownames(data.nor),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_name"]
+list <- unique(c("Il11", "Il1b", "Tgfb1", "Tnfsf10", "Tnfsf8",  "Ccl2", "Ccl6", "Ccl7", "Ccl8", "Ccl9", "Ccl12", "Ccl22", "Cxcl9","Cxcl10","Cxcl16","Ccr1","Ccr2", "Ccr5", "Ccr7",  "Csf2rb", "Csf2rb2",  "Ccl2",  "Ccl12", "Ccl22",  "Cxcl10",  "Ccr2", "Csf2rb", "Csf2rb2", "Lyz2",  "Tnfsf10", "Il1b")) 
+
+#data.nor$gene_name <- DATA.org[match(sapply(strsplit(rownames(data.nor),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_name"]
+
+list_id <-DATA.org[match(sapply(list, function(x) x[1]), DATA.org$gene_name),"gene_id"]
+
+data_nor_gene <- data.nor[list_id,] %>% as.data.frame()
+data_nor_gene$gene_name <- DATA.org[match(sapply(strsplit(rownames(data_nor_gene),"\\."), function(x) x[1]), DATA.org$gene_id),"gene_name"]
+rownames(data_nor_gene) <- data_nor_gene$gene_name
+data_nor_gene$gene_name <- NULL
+
+ colnames(data_nor_gene) <- meta$SampleID
+
+```
