@@ -1,0 +1,525 @@
+ntroduction
+
+This is the report for analyzing data from Proteomics (label free MS) data from AEC treated mice brain. By comparing the HG population and microglia population, we can get HG specific marker on protein level.
+
+The samples included Mic3, Mic4, Mic6, Mic7, Mic8 and HG3, HG4, HG6, HG7, HG8. Besides, there are HG_B, HG_D, HG_F as pilot study with significantly low protein number. Therefore, i will keep it at the beginning and decide if we need to exclude them later.
+
+{r Load librires}
+#| echo: false
+#| include: false
+
+library(tidyverse)
+library(DEqMS)
+library(ComplexHeatmap)
+library(gprofiler2)
+library(correlationAnalyzeR)
+library(clusterProfiler)
+library(UniProt.ws)
+library(DOSE)
+#library(xlsx)
+library(plotly)
+library(DOSE)
+library(EnhancedVolcano)
+library(biomaRt)
+library(htmltools)
+library(DT)
+library(readxl)
+library(matrixStats)
+library(org.Mm.eg.db)
+library(edgeR)
+library(Seurat)
+#GOBP_list <- getTERM2GENE(GSEA_Type = "GO:BP", Species = "mmusculus") 
+#KEGG_list <- getTERM2GENE(GSEA_Type = "KEGG", Species = "mmusculus")
+
+library(edgeR)
+library(limma)
+
+row_min_nonzero <- function(x) {
+  x[x == 0] <- NA        # turn zeros into NA
+  rowMins(x, na.rm = TRUE)
+}
+
+DATA Overview
+
+{r DATA load and preprocess}
+#| echo: false
+#| include: false
+
+data <- read_excel("CPMSF_GPPF-YG-211_CF211_Report.xlsx", sheet = 2)
+DATA_org <- data[,c(1,43:55)] %>% as.data.frame() 
+
+colnames(DATA_org) <- c("Uniprot Accession", "HG1","HG2","HG3", "HG4", "HG5","Mic1", "Mic2","Mic3", "Mic4","Mic5", "HG_A", "HG_B", "HG_C" )
+
+DATA <- DATA_org
+rownames(DATA) <- DATA$`Uniprot Accession`
+DATA$`Uniprot Accession` <- NULL
+DATA <- data.frame(lapply(DATA, as.numeric))
+rownames(DATA) <- DATA_org$`Uniprot Accession`
+DATA_log = log2(DATA+1)
+#remove rows with NAs
+#DATA_log = na.omit(DATA_log)
+DATA_log <- DATA_log[rowSums(is.na(DATA_log)) != ncol(DATA_log), ]
+
+{r Annotate the data}
+
+DATA_org$gene_name <- res[match(DATA_org$`Uniprot Accession`, res$From),"Gene.Names"]
+
+DATA_org$gene_name  <- sapply(strsplit(DATA_org$gene_name , " "), `[`, 1)
+DATA_org <- DATA_org[!is.na(DATA_org$gene_name),]
+
+#rownames(DATA_log_nor)<- DATA_log_nor$gene_name
+#DATA_log_nor$gene_name <- NULL
+
+Here are the detectable protein in all samples
+
+{r detable protein}
+
+knitr::kable(colSums(!is.na(DATA)) %>% as.data.frame() %>% t())
+
+
+{r Boxplot}
+#| fig-ncol: 1
+#| fig-width: 6
+#| fig-height: 4
+#| echo: false # We are showing the code here for demonstration purposes
+boxplot(DATA_log, las =2, main = "log Raw DATA" )
+DATA_log_nor = equalMedianNormalization(DATA_log)
+boxplot(DATA_log_nor, las =2, main = "log DATA with filter and normalization" )
+
+PCA plot
+
+Please note this PCA plot was done by filtered out all the non-detected value. In other word, there are only 210 proteins presented in all the sample. This is because the low detected protein number in pilot samples.
+
+{r pca}
+#| label: fig-ncol-example
+#| fig-ncol: 1
+#| fig-width: 6
+#| fig-height: 4
+#| echo: false # We are showing the code here for demonstration purposes
+
+DATA_log_nor = na.omit(DATA_log_nor)
+DATA.pca <- prcomp(t(DATA_log_nor), center = T)
+#DATA.pca <- prcomp(t(DATA), center = T)
+
+DATA.pca.sum <- as.data.frame(summary(DATA.pca)$importance)
+DATA.pca <- as.data.frame(DATA.pca$x)
+
+DATA.pca$Group <- c(rep(c("Mic", "HG"), each =5), "HG_pilot","HG_pilot","HG_pilot")
+
+#DATA.pca$Group <- factor(DATA.pca$Group, levels = unique(c("Ctrl", "6_Hours","1_Day", "3_Days")))
+
+DATA.pca$Sample <- rownames(DATA.pca)
+
+
+  ggplot(as.data.frame(DATA.pca),
+  aes(x = PC1, y = PC2, colour = Group)
+  ) +
+  geom_point(shape=19, size=4, alpha = 0.7)+
+  geom_text(aes(label = Sample), position = position_jitter(width =2, height = 4)) +
+  geom_hline(yintercept = 0, colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = 0, colour = "gray65", linetype = "dashed") +
+  ggtitle("PCA on all samples") +
+  xlab(paste0("PC1 (",DATA.pca.sum$PC1[2]*100,"%)"))+
+  ylab(paste0("PC2 (",DATA.pca.sum$PC2[2]*100,"%)"))+
+  #ylab("PC3 2.1%")+
+  theme_classic()
+
+Here, after excluding pilot samples, there are 2972 proteins left and presenting in all real Microglia and HG samples.
+
+{r pca2}
+#| fig-ncol: 1
+#| fig-width: 6
+#| fig-height: 4
+#| echo: false # We are showing the code here for demonstration purposes
+
+DATA_log <- DATA_log[,1:10]
+DATA_log <- DATA_log[rowSums(is.na(DATA_log)) != ncol(DATA_log), ]
+DATA_log_nor = equalMedianNormalization(DATA_log)
+DATA_log_nor = na.omit(DATA_log_nor)
+DATA.pca <- prcomp(t(DATA_log_nor), center = T)
+#DATA.pca <- prcomp(t(DATA), center = T)
+
+DATA.pca.sum <- as.data.frame(summary(DATA.pca)$importance)
+DATA.pca <- as.data.frame(DATA.pca$x)
+
+DATA.pca$Group <- c(rep(c( "HG","Mic"), each =5))
+
+#DATA.pca$Group <- factor(DATA.pca$Group, levels = unique(c("Ctrl", "6_Hours","1_Day", "3_Days")))
+
+DATA.pca$Sample <- rownames(DATA.pca)
+
+
+  ggplot(as.data.frame(DATA.pca),
+  aes(x = PC1, y = PC2, colour = Group)
+  ) +
+  geom_point(shape=19, size=4, alpha = 0.7)+
+  geom_text(aes(label = Sample), position = position_jitter(width =2, height = 4)) +
+  geom_hline(yintercept = 0, colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = 0, colour = "gray65", linetype = "dashed") +
+  ggtitle("PCA excluding pilot") +
+  xlab(paste0("PC1 (",DATA.pca.sum$PC1[2]*100,"%)"))+
+  ylab(paste0("PC2 (",DATA.pca.sum$PC2[2]*100,"%)"))+
+  #ylab("PC3 2.1%")+
+  theme_classic()
+
+
+Differentiation Analysis
+
+Simple Comparision
+
+No Sig
+
+UP
+
+Down
+
+2836
+
+570
+
+920
+
+Diff Proteins with detectable value in more than 3 samples per condition
+
+No Sig
+
+UP
+
+DOWN
+
+1878
+
+340
+
+754
+
+Diff Protein with presentation in all samples
+
+{r dep}
+
+
+DATA_log = log2(DATA+1)
+DATA_log <- DATA_log[,1:10]
+DATA_log <- DATA_log[rowSums(is.na(DATA_log)) != ncol(DATA_log), ]
+DATA_log_nor = equalMedianNormalization(DATA_log)
+#DATA_log_nor = na.omit(DATA_log_nor)
+#DATA_log <- DATA_log[rowSums(is.na(DATA_log[grep("^Mic", names(DATA_log), value = TRUE)])) < 2 & rowSums(is.na(DATA_log[grep("^HG", names(DATA_log), value = TRUE)])) < 2, ]
+
+DATA_log_nor <- DATA_log_nor[rowSums(is.na(DATA_log_nor[grep("^Mic", names(DATA_log_nor), value = TRUE)])) < 2 & rowSums(is.na(DATA_log_nor[grep("^HG", names(DATA_log_nor), value = TRUE)])) < 2, ]
+
+## Anotate the genes
+up <- UniProt.ws(taxId = 9606)
+#keytypes(up)   # includes "UNIPROTKB"
+#columns(up)    # look for "PROTEIN-NAMES", "GENES", etc.
+
+res <- select(up, keys    = rownames(DATA), columns = c("UniProtKB", "gene_names", "protein_name"), keytype = "UniProtKB")
+
+DATA_log_nor$gene_name <- res[match(rownames(DATA_log_nor ), res$From),"Gene.Names"]
+DATA_log_nor <- DATA_log_nor[!is.na(DATA_log_nor$gene_name),]
+DATA_log_nor$gene_name <- sapply(strsplit(DATA_log_nor$gene_name, " "), `[`, 1)
+rownames(DATA_log_nor)<- DATA_log_nor$gene_name
+DATA_log_nor$gene_name <- NULL
+
+
+
+
+condition <- as.factor(rep(c("HighGranularCells", "Microglia"), each = 5))
+design = model.matrix(~0+condition) 
+colnames(design) = gsub("condition","",colnames(design))
+
+contrast =  makeContrasts(contrasts= "HighGranularCells-Microglia",levels=design)
+fit1 <- lmFit(DATA_log_nor, design)
+fit2 <- contrasts.fit(fit1,contrasts = contrast)
+fit3 <- eBayes(fit2)
+
+
+#count.table = data.frame(count = rowMins(data[,17:26] %>% as.matrix()) , row.names =  DATA_org$`Uniprot Accession`) +1
+count.table = data.frame(count = row_min_nonzero(data[data$PG.ProteinGroups %in% DATA_org$`Uniprot Accession`,17:26] %>% as.matrix()) , row.names =  DATA_org$gene_name) 
+
+fit3$count = count.table[rownames(fit3$coefficients),"count"]
+fit4 = spectraCounteBayes(fit3)
+
+{r Fit curve}
+
+VarianceBoxplot(fit4,n=30,xlab="PSM count")
+
+{r fit scatter}
+
+VarianceScatterplot(fit4)
+
+{r Annotate result}
+
+DEqMS.results = outputResult(fit4,coef_col = 1)
+#head(DEqMS.results)
+up <- UniProt.ws(taxId = 9606)
+#keytypes(up)   # includes "UNIPROTKB"
+#columns(up)    # look for "PROTEIN-NAMES", "GENES", etc.
+
+res <- select(
+  up,
+  keys    = rownames(DATA),
+  columns = c("UniProtKB", "gene_names", "protein_name"),
+  keytype = "UniProtKB"
+)
+
+DEqMS.results$gene_name <- res[match(rownames(DEqMS.results), res$From),"Gene.Names"]
+DEqMS.results$gene_name_org <- DEqMS.results$gene_name
+DEqMS.results$gene_name <- sapply(strsplit(DEqMS.results$gene_name, " "), `[`, 1)
+
+
+{r prepare the results}
+
+DEqMS.results <- DEqMS.results %>% mutate(threshold  = sca.P.Value <= 0.05 & abs(logFC) >= 1)
+
+DEqMS.results$diffexpressed <- "NO"
+DEqMS.results$diffexpressed[DEqMS.results$logFC > 1 & DEqMS.results$threshold  == TRUE] <- "UP"
+DEqMS.results$diffexpressed[DEqMS.results$logFC < -1 & DEqMS.results$threshold  == TRUE] <- "DOWN"
+
+diffexpressed <- ifelse(
+    DEqMS.results$logFC > 1 & DEqMS.results$ threshold  == TRUE, '#BE0B1C',
+    ifelse(
+      DEqMS.results$logFC < 1 & DEqMS.results$threshold  == TRUE, "#282973",
+        'grey'))
+diffexpressed[is.na(diffexpressed)] <- "grey"
+names(diffexpressed)[diffexpressed == "#BE0B1C"] <- "UP"
+names(diffexpressed)[diffexpressed == "#282973"] <- "DOWN"
+names(diffexpressed)[diffexpressed == "grey"] <- "no Sig"
+
+
+## --- Top 10 UP ---
+up <- DEqMS.results[DEqMS.results$diffexpressed == "UP", ]                   # keep only upregulated
+top10_up <- c(up[order(up$logFC,decreasing = T ), ]$gene[1:10])           # 10 smallest padj
+
+## --- Top 10 DOWN ---
+down <- DEqMS.results[DEqMS.results$diffexpressed == "DOWN", ]                        # keep only downregulated
+top10_down <-c(down[order(down$logFC), ]$gene[1:10])
+
+table(DEqMS.results$diffexpressed)
+
+Interactive Volcano plot
+
+hover the mouse on the dot to check the protein names
+
+{r interactive Volcano}
+#| warning: false
+
+mycolors <- c("#282973","#BE0B1C",  "grey")
+  names(mycolors) <- c("DOWN", "UP", "NO")
+#if(interactive == T){
+  
+DEqMS.results$diffexpressed <- factor(DEqMS.results$diffexpressed, levels = c("NO", "UP", "DOWN"))
+ggplotly(
+ggplot(DEqMS.results %>% arrange(match(diffexpressed, c( "NO","UP", "DOWN")))) +
+  aes(x = logFC, y = -log10(sca.P.Value), colour = diffexpressed, text = gene_name)+
+  geom_point(size=2)+
+  scale_color_manual(values = mycolors)  +
+  geom_hline(yintercept = -log10(0.05), colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = 1, colour = "gray65", linetype = "dashed") +
+  geom_vline(xintercept = -1, colour = "gray65", linetype = "dashed") +
+  labs(x = "log2 fold change",
+       y = "-log10 padj",
+       title = "Volcano Plot",
+       #subtitle = paste0( Condition1, "vs", Condition2),
+       caption=paste0("produced on ", Sys.time())) +
+  theme_classic()) %>% layout(title = list(text = paste0('VolcanoPlots',
+                                    '<br>',
+                                    '<sup>',
+                                     paste0("HG", " vs " , "Microglia", "   P Value < 0.05 & abs(LogFC) >= 1"),
+                                    '</sup>')), 
+        hoverlabel=list(bgcolor="white") )
+
+
+{r enhancedVolcano}
+#| fig-ncol: 1
+#| fig-width: 8
+#| fig-height: 5
+#| echo: false # We are showing the code here for demonstration purposes
+
+EnhancedVolcano(DEqMS.results, 
+                x ="logFC", 
+                y = "sca.P.Value" , 
+                subtitle = paste0( "HG", " vs ", "Microglia", "   P value < 0.05 & abs(LogFC) >= 1"),
+                #selectLab = c("Gng4", "Gbp2", "Eomes", "Lgr5", "Apold1", "Capn11", "Cxcl10","Shox2", "Ifi44","Ccl7"),
+                selectLab =c(top10_up,top10_down, "Alox15"),
+                lab = DEqMS.results$gene, 
+                pCutoff = 0.05,
+                colAlpha = 0.6,
+                pointSize = 2,
+                ylab = bquote(~-Log[10] ~ italic(Pvalue)),
+                drawConnectors = T,
+                widthConnectors = 0.7,
+                colConnectors = 'black',
+                boxedLabels = T,
+                labSize = 3,
+                colCustom = diffexpressed
+                #col = c("grey","grey","#1D5B2D")
+                ) + 
+  theme_classic() +
+  theme(legend.title=element_blank())
+
+ggsave("Volcano.pdf", width = 8, height = 5, dpi = 600)
+
+{r result table}
+
+
+deg <- DEqMS.results[,c(12,13, 1,8:11,15)]
+browsable(
+  tagList(
+    tags$h4("Differentiated Expressed Protein"),
+    datatable(deg)
+))
+
+
+  
+
+Enrichment Analysis
+
+Over representative Analysis (Gprofiler2)
+
+UP
+
+{r UP GO}
+#| fig-ncol: 1
+#| fig-width: 20
+#| fig-height: 9
+#| echo: false # We are showing the code here for demonstration purposes
+
+go = gost(DEqMS.results$gene_name[DEqMS.results$diffexpressed =="UP"], organism = 'mmusculus')
+go = gost(sapply(strsplit(rownames(DEqMS.results[DEqMS.results$diffexpressed =="UP",]), " "), `[`, 1), organism = 'mmusculus',evcodes = T)
+
+write.csv(go$result[,c(11,3:11,16)], "UP_term.csv")
+
+gostplot(go,interactive = T)%>% layout(title = paste0("Enriched terms in HG"))
+
+{r UP GO result}
+browsable(
+  tagList(
+    tags$h4("Enrichment Analysis on HG Upregulated Genes"),
+    datatable(go$result[,c(11, 3:11)])
+))
+
+DOWN
+
+{r DOWN GO}
+#| fig-ncol: 1
+#| fig-width: 20
+#| fig-height: 9
+#| echo: false # We are showing the code here for demonstration purposes
+
+go = gost(DEqMS.results$gene_name[DEqMS.results$diffexpressed =="DOWN"], organism = 'mmusculus')
+
+go = gost(sapply(strsplit(rownames(DEqMS.results[DEqMS.results$diffexpressed =="DOWN",]), " "), `[`, 1), organism = 'mmusculus',evcodes = T)
+
+write.csv(go$result[,c(11,3:11,16)], "DOWN_term.csv")
+
+gostplot(go,interactive = T)%>% layout(title = paste0("Enriched terms in Microglia"))
+
+{r DOWN GO result}
+browsable(
+  tagList(
+    tags$h4("Enrichment Analysis on HG Down-regulated Genes"),
+    datatable(go$result[,c(11, 3:11)])
+))
+
+GSEA
+
+{r build GSEA}
+genelist <- DEqMS.results$logFC
+names(genelist) <- DEqMS.results$gene_name
+genelist <- genelist[!is.na(names(genelist))]
+genelist <- sort(genelist, decreasing = T) 
+
+gse <- gseGO(geneList = genelist, ont = "ALL", by = "fgsea", OrgDb = org.Mm.eg.db, keyType = "SYMBOL", eps=0 )
+
+{r gsea result }
+#| fig-ncol: 1
+#| fig-width: 12
+#| fig-height: 9
+#| echo: false # We are showing the code here for demonstration purposes
+
+dotplot(gse, showCategory=10, split=".sign") + facet_grid(.~.sign)
+
+Here is the detailed table. Positive NES means up-regulated pathway in HG.
+
+{r gsea result table}
+browsable(
+  tagList(
+    tags$h4("GSEA result"),
+    datatable(gse@result )
+))
+
+Gene Plot
+
+Alox15
+
+{r Prepare Data}
+DATA_log = log2(DATA+1)
+DATA_log <- DATA_log[,1:10]
+DATA_log <- DATA_log[rowSums(is.na(DATA_log)) != ncol(DATA_log), ]
+DATA_log_nor = equalMedianNormalization(DATA_log)
+DATA_log_nor2 <- DATA_log_nor
+
+
+DATA_log_nor2$gene_name <- res[match(rownames(DATA_log_nor2), res$From),"Gene.Names"]
+DATA_log_nor2$gene_name <- sapply(strsplit(DATA_log_nor2$gene_name, " "), `[`, 1)
+
+
+
+DATA_log_nor2 <- DATA_log_nor2[!is.na(DATA_log_nor2$gene_name),]
+rownames(DATA_log_nor2) <- DATA_log_nor2$gene_name
+DATA_log_nor2$gene_name <- NULL
+
+
+
+{r plot}
+#| fig-ncol: 2
+#| fig-width: 4
+#| fig-height: 3
+#| echo: false # We are showing the code here for demonstration purposes
+
+
+gene_list <- c("Alox15")
+DEqMS.results2 <- DATA_log_nor2[rownames(DATA_log_nor2) %in% gene_list,]  %>% as.data.frame()
+Data <- t(DEqMS.results2) %>% as.data.frame()
+Data$condition <- rep(c( "HG","Microglia"), each = 5)
+colnames(Data) <- c("gene", "condition")
+ggplot(Data)+ aes(x = condition, y = gene, color = condition) + 
+    geom_boxplot(staplewidth = 0.2, width = 0.3)+ 
+    geom_point(position=position_jitter(w = 0,h = 0)) +
+    theme_classic() +
+    ylab("Normalized Intensity")+ xlab(NULL)+
+    ggtitle(gene_list) +
+    theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45,  hjust=1))
+
+gene_list <- c("P2ry12")
+DEqMS.results2 <- DATA_log_nor2[rownames(DATA_log_nor2) %in% gene_list,]  %>% as.data.frame()
+Data <- t(DEqMS.results2) %>% as.data.frame()
+Data$condition <- rep(c("HG", "Microglia"), each = 5)
+colnames(Data) <- c("gene", "condition")
+ ggplot(Data)+ aes(x = condition, y = gene, color = condition) + 
+    geom_boxplot(staplewidth = 0.2, width = 0.3)+ 
+    geom_point(position=position_jitter(w = 0,h = 0)) +
+    theme_classic() +
+    ylab("Normalized Intensity")+ xlab(NULL)+
+    ggtitle(gene_list) +
+    theme(plot.title = element_text(hjust = 0.5),axis.text.x = element_text(angle = 45,  hjust=1))
+
+#+ theme(legend.position="none")
+
+{r}
+#| fig-ncol: 2
+#| fig-width: 4
+#| fig-height: 3
+#| echo: false # We are showing the code here for demonstration purposes
+
+gene_list <- c("Csf2ra", "Csf1r","Il1r1","Il1r2","Il1rap","Il3ra","Il4r","Il6ra","Tgfbr1","Tgfbr2","Tgfbr3","Tnfrsf1a","Tnfrsf1b")
+DEqMS.results2 <- DATA_log_nor2[rownames(DATA_log_nor2) %in% gene_list,]  %>% as.data.frame()
+Data <- t(DEqMS.results2) %>% as.data.frame()
+
+hp<-Heatmap(Data %>% as.matrix()%>% pheatmap:::scale_rows(), col= c("#4575B4", "#FFFFBF", "#D73027"),name = "Log Abundance", na_col = "white", cluster_rows = FALSE, cluster_columns = FALSE)
+lgd_na <- Legend(labels = "Undetected", legend_gp = gpar(fill = "white"), border = "black") # Border makes the white box visible    
+
+pdf("Selected Genes.pdf", width = 4, height = 5)
+draw(hp, annotation_legend_list = list(lgd_na), merge_legends = T)
+dev.off()
+
