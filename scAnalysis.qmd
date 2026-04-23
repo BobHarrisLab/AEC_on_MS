@@ -26,10 +26,13 @@ library(DOSE)
 
 ## Quality Control
 
-### PBS
-```{r preprocess the PBS data}
-#Create a Seurat Object
+```{r preprocess the data}
+#For cellbender processed data
 DATA <- Read_CellBender_h5_Mat(file_name = "../data/cell/sc1_cellbender_filtered.h5")
+
+#For Cellranger processed data
+DATA <- Read10X_h5("../data/cell/sample_filtered_feature_bc_matrix.h5")
+
 
 DATA <- CreateSeuratObject(counts = DATA, names.field = 3, names.delim = "_")
 #Start with PBS group----
@@ -52,7 +55,7 @@ DATA <- CellCycleScoring(DATA %>% NormalizeData(), g2m.features = gorth(cc.genes
     s.features= gorth(cc.genes.updated.2019$s.genes, source_organism = "hsapiens", target_organism = "mmusculus")$ortholog_name,set.ident = T)
 
 
-pdf("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/result/AECs/Results/Brain_CD45/PBS_QC.pdf", width = 15, height = 8)
+pdf("Brain_CD45/PBS_QC.pdf", width = 15, height = 8)
 VlnPlot(DATA, features = c("nFeature_RNA","nCount_RNA","percent_mito","percent_ribo", "percent_hb", "percent_plat","S.Score", "G2M.Score"), pt.size = 0.1,ncol = 3) + NoLegend()
 dev.off()
 ```
@@ -108,92 +111,6 @@ plot_grid(DimPlot(DATA, group.by = "orig.ident") + NoAxes(),
 
 ```{r}
 saveRDS(DATA, "../data/cell/PBS.rds")
-```
-
-### AEC
-
-```{r preprocess the AEC data}
-#Create a Seurat Object
-DATA <- Read_CellBender_h5_Mat(file_name = "../data/cell/sc2_cellbender_filtered.h5")
-
-DATA <- CreateSeuratObject(counts = DATA, names.field = 3, names.delim = "_")
-#Start with PBS group----
-DATA$Condition <- "AEC"
-```
-
-
-```{r Calculate QC}
-DATA <- PercentageFeatureSet(DATA, "^mt-", col.name = "percent_mito")
-DATA <- PercentageFeatureSet(DATA, "^Rp[sl]", col.name = "percent_ribo")
-#Percentage hemoglobin genes - includes all genes starting with HB except HBP.
-DATA <- PercentageFeatureSet(DATA, "^Hb[^(p)]", col.name = "percent_hb")
-DATA <- PercentageFeatureSet(DATA, "Pecam1|Pf4", col.name = "percent_plat")
-
-#Plot QC
-VlnPlot(DATA, features = c("nFeature_RNA","nCount_RNA","percent_mito","percent_ribo", "percent_hb", "percent_plat"), pt.size = 0.1,ncol = 3) + NoLegend()
-
-
-
-DATA <- CellCycleScoring(DATA %>% NormalizeData(), g2m.features = gorth(cc.genes.updated.2019$g2m.genes, source_organism = "hsapiens", target_organism = "mmusculus")$ortholog_name, 
-    s.features= gorth(cc.genes.updated.2019$s.genes, source_organism = "hsapiens", target_organism = "mmusculus")$ortholog_name,set.ident = T)
-
-
-pdf("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/result/AECs/Results/Brain_CD45/AEC_QC.pdf", width = 15, height = 8)
-VlnPlot(DATA, features = c("nFeature_RNA","nCount_RNA","percent_mito","percent_ribo", "percent_hb", "percent_plat","S.Score", "G2M.Score"), pt.size = 0.1,ncol = 3) + NoLegend()
-dev.off()
-```
-
-
-```{r plot QC}
-VlnPlot(DATA, features = c("nFeature_RNA","nCount_RNA","percent_mito","percent_ribo", "percent_hb", "percent_plat","S.Score", "G2M.Score"), pt.size = 0.1,ncol = 3) + NoLegend()
-
-hist(DATA$nFeature_RNA)
-range(DATA$nFeature_RNA)
-median(DATA$nFeature_RNA)
-sd(DATA$nFeature_RNA)
-
-#Visualize which genes contribute to reads most ----
-par(mar = c(4, 8, 2, 1))
-C <- DATA@assays$RNA@layers$counts
-rownames(C) <- rownames(DATA)
-colnames(C) <- colnames(DATA)
-C <- Matrix::t(Matrix::t(C)/Matrix::colSums(C)) * 100
-most_expressed <- order(apply(C, 1, median), decreasing = T)[20:1]
-boxplot(as.matrix(t(C[most_expressed, ])), cex = 0.1, las = 1, xlab = "% total count per cell",
-    col = (scales::hue_pal())(20)[20:1], horizontal = TRUE)
-rm(C)
-
-```
-
-```{r QC}
-dim(DATA)
-#Depend on the QC plot, change the QC matrix
-DATA <- subset(DATA, subset = nFeature_RNA > 200 & percent_mito < 20 & percent_hb < 15) 
-dim(DATA) #Check cell number
-```
-
-```{r doubletfinder}
-DATA <- NormalizeData(DATA)
-DATA <- FindVariableFeatures(DATA)
-DATA <- ScaleData(DATA, vars.to.regress = c("nFeature_RNA","nCount_RNA","percent_mito","percent_ribo", "percent_hb","percent_plat","S.Score", "G2M.Score"))
-DATA <- RunPCA(DATA, npcs = 30)
-DATA <- RunUMAP(DATA, dims = 1:30)
-
-nExp <- round(ncol(DATA) * 0.031)  # expect 8% doublets for 10000 loaded cells (Check 10X loaded chart)
-DATA <- doubletFinder(DATA, pN = 0.25, pK = 0.09, nExp = nExp, PCs = 1:30)
-# name of the DF prediction can change, so extract the correct column name.
-colnames(DATA@meta.data)[grepl("DF.classification", colnames(DATA@meta.data))]
-DATA$DF <-  DATA$DF.classifications_0.25_0.09_192
-plot_grid(DimPlot(DATA, group.by = "orig.ident") + NoAxes(), 
-    DimPlot(DATA, group.by = "DF") + NoAxes()
-    #,FeaturePlot(DATA, features = c("Mki67","Pcna"))
-    ,ncol = 2)
-
-```
-
-
-```{r}
-saveRDS(DATA, "../data/cell/AEC.rds")
 ```
 
 ## Integration
@@ -266,7 +183,7 @@ p3<-DimPlot(DATA,group.by = "Condition",reduction = "umap.cca", shuffle = T)+ggt
 DimPlot(DATA,group.by = "SampleID",reduction = "umap.cca", split.by = "Condition",shuffle = T)+ggtitle("CCA")
 plot_grid(p2,p3,ncol=2)
 
-pdf("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/result/AECs/Results/Brain_CD45/Integration.pdf", width = 10, height = 6)
+pdf("../Brain_CD45/Integration.pdf", width = 10, height = 6)
 plot_grid(p1,p2,p3,ncol=2)
 dev.off()
 ```
@@ -313,8 +230,8 @@ detable_all <- detable_all[ detable_all$p_val < 0.05,  ]
 
 detable_all %>% group_by(cluster)  %>% top_n(50, log.pct.diff)  %>% top_n(-25, p_val)-> top25
 plot_dots(DATA,genes = unique(top25$gene), clustering = "Leiden_1.5",pal = c("#cfc8d7","#a577f2", "#0434ff"),cex.row = 0.6)
-write.csv(top25, file = "/Users/yuxguo/Library/CloudStorage/OneDrive-KarolinskaInstitutet/result/AECs/files/CD45_brain/Major_Markers_top25.csv")
-write.csv(detable_all, file = "/Users/yuxguo/Library/CloudStorage/OneDrive-KarolinskaInstitutet/result/AECs/files/CD45_brain/Major_Markers_All.csv")
+write.csv(top25, file = "../Major_Markers_top25.csv")
+write.csv(detable_all, file = "../Major_Markers_All.csv")
 
 FeaturePlot(DATA, c("Cd3e","Cd3d", "Cd4", "Cd8a", "Nkg7","Cd19", "Ms4a1", "Cd14", "Ms4a7",
      "Cst3", "Fcer1a", "Ptprc", "Cd68", "P2ry12","Tmem119", "Hexb", "Csf1r", "Itgam", "Ly6c"))
@@ -328,7 +245,7 @@ saveRDS(DATA, "../data/Brain_Cd45/data_clustered.rds")
 
 ```
 
-```{r}
+```{r Annotation}
 DimPlot(DATA,label =T)
 new.cluster.ids <- c("Microglia", "Microglia", "T Cells", "Microglia", "Microglia", "Microglia", "Microglia", "Microglia", "Microglia", "Microglia", "Microglia", "T Cells", "T Cells", "Monocytes", "B Cells", "NK Cells", "Microglia", "Microglia", "T Cells", "T Cells", "Microglia", "Dendritic Cells", "Microglia", "Macrophages", "Macrophages", "Neutrophil", "Microglia", "Microglia", "B Cells", "Neutrophil", "T Cells", "Dendritic Cells", "Mast Cells", "Microglia")
 
@@ -341,7 +258,7 @@ DATA <- RenameIdents(DATA, new.cluster.ids)
 DimPlot(DATA,label =T, reduction = "")
 DATA$Celltypes <- DATA@active.ident
 
-pdf("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/result/AECs/Results/Brain_CD45/Celltypes.pdf", width = 8, height = 4.5)
+pdf("../Results/Brain_CD45/Celltypes.pdf", width = 8, height = 4.5)
 DimPlot(DATA,group.by = "Celltypes", alpha = 0.6, reduction = "umap.harmony")
 dev.off()
 ```
@@ -443,21 +360,7 @@ plot_dots(DATA, genes = c("Cd69","Cd79a","Cd38","Cd79a","H2-D1", "H2-K1","H2-Aa"
 ```
 
 
-Microglia cluster 1 in Louvain has lots of enzime activated markers so I will remove it
 
-```{r remove}
-
-DATA <- SetIdent(DATA, value = "Louvain_1") %>% subset(idents = c(0, 2:13))
-
-DATA <- RunUMAP(DATA, reduction = "harmony", dims = 1:40, reduction.name = "umap.harmony.2")
-FeaturePlot(DATA, reduction = "umap.harmony.2", features = "Clec7a")
- 
-plot_grid(
-          DimPlot(DATA, group.by = "Louvain_1", reduction = "umap.harmony.2", pt.size = 1, alpha = 0.7, label = T))
-
-
-
-```
 
 
 ```{r Change the annotation}
@@ -503,4 +406,4 @@ dev.off()
 
 ```
 
-And siubtypes for other cells was made in the same way. 
+And subtypes for other cells was made in the same way. 
